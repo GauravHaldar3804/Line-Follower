@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PID Controller</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+    }
+    h1 {
+      margin-bottom: 20px;
+    }
+    .controls {
+      display: inline-block;
+      margin: 0 10px;
+    }
+    .slider {
+      width: 200px;
+    }
+    #values {
+      margin-top: 20px;
+      font-weight: bold;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 10px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <h1>PID Controller</h1>
+  <div class="controls">
+    <h2>KP:</h2>
+    <input type="range" min="0" max="1000" step="1" value="0" id="kp-slider" class="slider">
+    <p id="kp-value">0</p>
+  </div>
+  <div class="controls">
+    <h2>KI:</h2>
+    <input type="range" min="0" max="1000" step="1" value="0" id="ki-slider" class="slider">
+    <p id="ki-value">0</p>
+  </div>
+  <div class="controls">
+    <h2>KD:</h2>
+    <input type="range" min="0" max="1000" step="1" value="0" id="kd-slider" class="slider">
+    <p id="kd-value">0</p>
+  </div>
+  <div id="values">
+    <button id="start-button">Start</button>
+    <button id="stop-button">Stop</button>
+  </div>
+  <script>
+    var Socket;
+
+    function init() {
+      Socket = new WebSocket("ws://" + window.location.hostname + ":81/");
+      Socket.onmessage = function(event) {
+        processCommand(event);
+      };
+    }
+
+    function sendMessage(type, value) {
+      var msg = {
+        type: type,
+        value: value
+      };
+      Socket.send(JSON.stringify(msg));
+    }
+
+    var kpSlider = document.getElementById('kp-slider');
+    var kpValue = document.getElementById('kp-value');
+    var kiSlider = document.getElementById('ki-slider');
+    var kiValue = document.getElementById('ki-value');
+    var kdSlider = document.getElementById('kd-slider');
+    var kdValue = document.getElementById('kd-value');
+
+    kpSlider.oninput = function() {
+      kpValue.textContent = this.value;
+      sendMessage("KP", this.value);
+    };
+    kiSlider.oninput = function() {
+      kiValue.textContent = this.value;
+      sendMessage("KI", this.value);
+    };
+    kdSlider.oninput = function() {
+      kdValue.textContent = this.value;
+      sendMessage("KD", this.value);
+    };
+
+    document.getElementById('start-button').addEventListener('click', function() {
+      sendMessage("Start", "true");
+    });
+
+    document.getElementById('stop-button').addEventListener('click', function() {
+      sendMessage("Stop", "false");
+    });
+
+    function processCommand(event) {
+      var obj = JSON.parse(event.data);
+      var type = obj.type;
+      var value = obj.value;
+
+      if (type === "KP") {
+        kpSlider.value = value;
+        kpValue.textContent = value;
+      } else if (type === "KI") {
+        kiSlider.value = value;
+        kiValue.textContent = value;
+      } else if (type === "KD") {
+        kdSlider.value = value;
+        kdValue.textContent = value;
+      } else if (type === "Start") {
+        system_started = value === "true";
+      } else if (type === "Stop") {
+        system_started = value === "false";
+      }
+    }
+
+    window.onload = function(event) {
+      init();
+    };
+  </script>
+</body>
+</html>
