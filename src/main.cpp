@@ -8,21 +8,22 @@
 
 
 // Motor Variables
-const int PWMA = 10;
+const int PWMA = 12;
 const int AIN1 = 13;
-const int AIN2 = 12;
-const int PWMB = 11;
-const int BIN1 = 14;
-const int BIN2 = 15;
-const int STBY = A0;
+const int AIN2 = 21;
+const int PWMB = 22;
+const int BIN1 = 23;
+const int BIN2 = 5;
+const int STBY = 15;
 const int motorSpeed = 100;
 const int maxMotorSpeed = 255;
 
+int count = 0;
 
 // PID Variables
-double KP = 0.03;
-double KI = 0.00;
-double KD = 0.00;
+int KP = 0;
+int KI = 0;
+int KD = 0;
 int error = 0;
 int previousError = 0;
 int sumOfErrors = 0;
@@ -208,11 +209,11 @@ void onWSevent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
       Serial.println(value);
 
       if (strcmp(type, "KP") == 0) {
-        KP = atof(value)*0.001;
+        KP = atof(value);
       } else if (strcmp(type, "KI") == 0) {
-        KI = atof(value)*0.001;
+        KI = atof(value);
       } else if (strcmp(type, "KD") == 0) {
-        KD = atof(value)*0.001;
+        KD = atof(value);
       } else if (strcmp(type, "Start") == 0) {
         system_started = true;
       } else if (strcmp(type, "Stop") == 0) {
@@ -252,7 +253,7 @@ void websocketSetup(){
   // 2.5 ms RC read timeout (default) * 10 reads per calibrate() call
   // = ~25 ms per calibrate() call.
   // Call calibrate() 400 times to make calibration take about 10 seconds.
-  for (uint16_t i = 0; i < 500; i++)
+  for (uint16_t i = 0; i < 400; i++)
   {
     qtr.calibrate();
   }
@@ -279,9 +280,14 @@ void websocketSetup(){
 
 
 // PID Control Functions
-void PIDcontrol(){
+void PIDcontrol(int Kp,int Ki,int Kd){
+  Kp = KP * 0.001;
+  Ki = KI * 0.001;
+  Kd = Kd * 0.001;
+
+
   sumOfErrors = error + previousError;
-  int adjustedSpeed = (int)((KP * error) + (KD * (error - previousError)) + (KI * sumOfErrors));
+  int adjustedSpeed = (int)((Kp * error) + (Kd * (error - previousError)) + (Ki * sumOfErrors));
   previousError = error;
   digitalWrite(AIN1, HIGH);
   digitalWrite(AIN2, LOW);
@@ -294,35 +300,34 @@ void PIDcontrol(){
 
 
 // Wait for Command
-void waitForSystemStart() {
-  Serial.println("Waiting for system to start...");
-  while (!system_started) {
-    websocket.loop();
-    delay(100);  // Small delay to prevent busy waiting
-  }
-  Serial.println("System started!");
-}
+// void waitForSystemStart() {
+//   Serial.println("Waiting for system to start...");
+//   while (!system_started) {
+  
+//     // websocket.loop();
+//     delay(100);  // Small delay to prevent busy waiting
+//   }
+//   Serial.println("System started!");
+// }
 
 
 void setup()
 {
 
-  // Wait for start button to be pressed
-  waitForSystemStart();
+  Serial.begin(9600);
+
+  // Websocket Setup
+  websocketSetup();
 
   
-  Serial.begin(9600);
+  
   // Configure the sensors
   qtr.setTypeRC();
-  qtr.setSensorPins((const uint8_t[]){3, 4, 5, 6, 7, 8, 9, 12}, SensorCount);
-  qtr.setEmitterPin(2);
+  qtr.setSensorPins((const uint8_t[]){14, 27, 26, 25, 33, 32, 18, 19}, SensorCount);
+  qtr.setEmitterPin(4);
 
-  
 
-  // Calibrate Sensors
-  calibrateLinesensor();
-
-  // Set pins as outputs
+    // // Set pins as outputs
   pinMode(PWMA, OUTPUT);
   pinMode(AIN1, OUTPUT);
   pinMode(AIN2, OUTPUT);
@@ -331,14 +336,14 @@ void setup()
   pinMode(BIN2, OUTPUT);
   pinMode(STBY, OUTPUT);
 
-  // Initialize motors
-  digitalWrite(STBY, HIGH);  // Disable standby
-
-  // Websocket Setup
-  websocketSetup();
+  // // Initialize motors
+  digitalWrite(STBY, HIGH);
 
 
-  delay(1000);
+
+
+  // Disable standby
+ delay(1000);
 }
 
 void loop()
@@ -346,13 +351,23 @@ void loop()
 
   server.handleClient();
   websocket.loop();
-  // read calibrated sensor values and obtain a measure of the line position
-  // from 0 to 5000 (for a white line, use readLineWhite() instead)
+
+    if (system_started== true){
+// Calibrate Sensors
+count++;
+if(count==1){
+  calibrateLinesensor();
+  }
+  
+
+else if (count>1){
+  // // read calibrated sensor values and obtain a measure of the line position
+  // // from 0 to 5000 (for a white line, use readLineWhite() instead)
   uint16_t position = qtr.readLineBlack(sensorValues);
 
-  // print the sensor values as numbers from 0 to 1000, where 0 means maximum
-  // reflectance and 1000 means minimum reflectance, followed by the line
-  // position
+  // // print the sensor values as numbers from 0 to 1000, where 0 means maximum
+  // // reflectance and 1000 means minimum reflectance, followed by the line
+  // // position
   for (uint8_t i = 0; i < SensorCount; i++)
   {
     Serial.print(sensorValues[i]);
@@ -360,8 +375,9 @@ void loop()
   }
   Serial.println(position);
 
-  // PID Control
-  PIDcontrol();
+  // // PID Control
+  PIDcontrol(KP,KI,KD);
+}    
+}
 
-  delay(10);
 }
