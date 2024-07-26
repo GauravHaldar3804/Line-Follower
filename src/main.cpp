@@ -218,6 +218,7 @@ void onWSevent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
         system_started = true;
       } else if (strcmp(type, "Stop") == 0) {
         system_started = false;
+        count = 0;
       }
 
       sendJSON(type, value);
@@ -377,6 +378,7 @@ else if (count>1){
 
   // // PID Control
   PIDcontrol(KP,KI,KD);
+  delay(100);
 }    
 }
 
