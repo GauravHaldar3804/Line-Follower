@@ -1,249 +1,48 @@
 #include <QTRSensors.h>
 #include <Arduino.h>
-#include <WiFi.h>
-#include <WebServer.h>
-#include <WebSocketsServer.h>
-#include <ArduinoJson.h>
-#include <WiFiCredentials.h>
+#include <SparkFun_TB6612.h>
+
+// // Motor Variables
+const int PWMA = 9;
+const int AIN1 = A1;
+const int AIN2 = A0;
+const int PWMB = 10;
+const int BIN1 = A4;
+const int BIN2 = A5;
+const int STBY = A3;
+int motorSpeed = 70;
+int maxMotorSpeed = 255;
 
 
-// Motor Variables
-const int PWMA = 12;
-const int AIN1 = 13;
-const int AIN2 = 21;
-const int PWMB = 22;
-const int BIN1 = 23;
-const int BIN2 = 5;
-const int STBY = 15;
-const int motorSpeed = 100;
-const int maxMotorSpeed = 255;
-
-int count = 0;
-
-// PID Variables
-int KP = 0;
-int KI = 0;
-int KD = 0;
+// PID Variable?₹
+float Kp = 0.087;
+float Ki = 0;
+float Kd = 0.25;
 int error = 0;
+int setpoint = 3500;
 int previousError = 0;
 int sumOfErrors = 0;
-
+bool PID = true;
 
 // Sensor declaration
 QTRSensors qtr;
 const uint8_t SensorCount = 8;
 uint16_t sensorValues[SensorCount];
 
-// Initilize Websocket
-WebServer server(80);
-WebSocketsServer websocket = WebSocketsServer(81);
-JsonDocument doc_tx;
-JsonDocument doc_rx;
-bool system_started = false;
 
-// Websocket HTML
+// these constants are used to allow you to make your motor configuration 
+// line up with function names like forward.  Value can be 1 or -1
+const int offsetA = 1;
+const int offsetB = 1;
 
-String webpage = R"(<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PID Controller</title>
-  <style>
-    body {
-      font-family: sans-serif;
-      text-align: center;
-    }
-    h1 {
-      margin-bottom: 20px;
-    }
-    .controls {
-      display: inline-block;
-      margin: 0 10px;
-    }
-    .slider {
-      width: 200px;
-    }
-    #values {
-      margin-top: 20px;
-      font-weight: bold;
-    }
-    button {
-      padding: 10px 20px;
-      margin: 10px;
-      font-size: 16px;
-    }
-  </style>
-</head>
-<body>
-  <h1>PID Controller</h1>
-  <div class="controls">
-    <h2>KP:</h2>
-    <input type="range" min="0" max="100" step="0.1" value="0" id="kp-slider" class="slider">
-    <p id="kp-value">0.0</p>
-  </div>
-  <div class="controls">
-    <h2>KI:</h2>
-    <input type="range" min="0" max="100" step="0.1" value="0" id="ki-slider" class="slider">
-    <p id="ki-value">0.0</p>
-  </div>
-  <div class="controls">
-    <h2>KD:</h2>
-    <input type="range" min="0" max="100" step="0.1" value="0" id="kd-slider" class="slider">
-    <p id="kd-value">0.0</p>
-  </div>
-  <div id="values">
-    <button id="start-button">Start</button>
-    <button id="stop-button">Stop</button>
-  </div>
-  <script>
-    var Socket;
-
-    function init() {
-      Socket = new WebSocket("ws://" + window.location.hostname + ":81/");
-      Socket.onmessage = function(event) {
-        processCommand(event);
-      };
-    }
-
-    function sendMessage(type, value) {
-      var msg = {
-        type: type,
-        value: value
-      };
-      Socket.send(JSON.stringify(msg));
-    }
-
-    var kpSlider = document.getElementById('kp-slider');
-    var kpValue = document.getElementById('kp-value');
-    var kiSlider = document.getElementById('ki-slider');
-    var kiValue = document.getElementById('ki-value');
-    var kdSlider = document.getElementById('kd-slider');
-    var kdValue = document.getElementById('kd-value');
-
-    kpSlider.oninput = function() {
-      kpValue.textContent = this.value;
-      sendMessage("KP", this.value);
-    };
-    kiSlider.oninput = function() {
-      kiValue.textContent = this.value;
-      sendMessage("KI", this.value);
-    };
-    kdSlider.oninput = function() {
-      kdValue.textContent = this.value;
-      sendMessage("KD", this.value);
-    };
-
-    document.getElementById('start-button').addEventListener('click', function() {
-      sendMessage("Start", "true");
-    });
-
-    document.getElementById('stop-button').addEventListener('click', function() {
-      sendMessage("Stop", "false");
-    });
-
-    function processCommand(event) {
-      var obj = JSON.parse(event.data);
-      var type = obj.type;
-      var value = obj.value;
-
-      if (type === "KP") {
-        kpSlider.value = value;
-        kpValue.textContent = value;
-      } else if (type === "KI") {
-        kiSlider.value = value;
-        kiValue.textContent = value;
-      } else if (type === "KD") {
-        kdSlider.value = value;
-        kdValue.textContent = value;
-      } else if (type === "Start") {
-        system_started = value === "true";
-      } else if (type === "Stop") {
-        system_started = value === "false";
-      }
-    }
-
-    window.onload = function(event) {
-      init();
-    };
-  </script>
-</body>
-</html>
-)";
-
-// Sending message back to websocket
-void sendJSON(const String& type, const String& value) {
-  String jsonstring;
-  JsonObject object = doc_tx.to<JsonObject>();
-  object["type"] = type;
-  object["value"] = value;
-  serializeJson(doc_tx, jsonstring);
-  websocket.broadcastTXT(jsonstring);
-}
+// Initializing motors.  The library will allow you to initialize as many
+// motors as you have memory for.  If you are using functions like forward
+// that take 2 motors as arguements you can either write new functions or
+// call the function more than once.
+Motor motor1 = Motor(AIN2, AIN1, PWMA, offsetA, STBY);
+Motor motor2 = Motor(BIN1, BIN2, PWMB, offsetB, STBY);
 
 
-// Websocket Function
-
-void onWSevent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
-  switch (type) {
-    case WStype_CONNECTED:
-      Serial.println("Client Connected");
-      break;
-    case WStype_DISCONNECTED:
-      Serial.println("Client Disconnected");
-      break;
-    case WStype_TEXT:
-      DeserializationError error = deserializeJson(doc_rx, payload);
-      if (error) {
-        Serial.print("Deserialization error: ");
-        Serial.println(error.c_str());
-        return;
-      }
-      const char* type = doc_rx["type"];
-      const char* value = doc_rx["value"];
-
-      Serial.print("Received: ");
-      Serial.print("Type: ");
-      Serial.print(type);
-      Serial.print(" Value: ");
-      Serial.println(value);
-
-      if (strcmp(type, "KP") == 0) {
-        KP = atof(value);
-      } else if (strcmp(type, "KI") == 0) {
-        KI = atof(value);
-      } else if (strcmp(type, "KD") == 0) {
-        KD = atof(value);
-      } else if (strcmp(type, "Start") == 0) {
-        system_started = true;
-      } else if (strcmp(type, "Stop") == 0) {
-        system_started = false;
-        count = 0;
-      }
-
-      sendJSON(type, value);
-      break;
-  }
-}
-
-
-// Websocket Setup Function
-void websocketSetup(){
-    WiFi.begin(SSID, Password);
-  Serial.println("Establishing connection with " + String(SSID));
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.print(".");
-  }
-  Serial.println("Connected to WiFi network with IP address: ");
-  Serial.println(WiFi.localIP());
-
-  server.on("/", [] { server.send(200, "text/html", webpage); });
-  server.begin();
-  websocket.begin();
-  websocket.onEvent(onWSevent);
-}
 
 // Calibrate Sensors Function
  void calibrateLinesensor(){
@@ -251,14 +50,20 @@ void websocketSetup(){
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH); // turn on Arduino's LED to indicate we are in calibration mode
 
+
+   motor1.drive(100);
+   motor2.drive(-100);
   // 2.5 ms RC read timeout (default) * 10 reads per calibrate() call
   // = ~25 ms per calibrate() call.
   // Call calibrate() 400 times to make calibration take about 10 seconds.
+ 
   for (uint16_t i = 0; i < 400; i++)
   {
     qtr.calibrate();
+
   }
-  digitalWrite(LED_BUILTIN, LOW); // turn off Arduino's LED to indicate we are through with calibration
+  digitalWrite(LED_BUILTIN, LOW);
+  brake(motor1, motor2); // turn off Arduino's LED to indicate we are through with calibration
 
   // print the calibration minimum values measured when emitters were on
   for (uint8_t i = 0; i < SensorCount; i++)
@@ -281,91 +86,90 @@ void websocketSetup(){
 
 
 // PID Control Functions
-void PIDcontrol(int Kp,int Ki,int Kd){
-  Kp = KP * 0.001;
-  Ki = KI * 0.001;
-  Kd = Kd * 0.001;
+void PIDcontrol(){
 
+   uint16_t position = qtr.readLineBlack(sensorValues);
+  error = position - setpoint;
 
-  sumOfErrors = error + previousError;
-  int adjustedSpeed = (int)((Kp * error) + (Kd * (error - previousError)) + (Ki * sumOfErrors));
-  previousError = error;
-  digitalWrite(AIN1, HIGH);
-  digitalWrite(AIN2, LOW);
-  digitalWrite(BIN1, HIGH);
-  digitalWrite(BIN2, LOW);
-  analogWrite(PWMA, constrain(motorSpeed+adjustedSpeed,0,maxMotorSpeed));
-  analogWrite(PWMB, constrain(motorSpeed-adjustedSpeed,0,maxMotorSpeed));
+   if(sensorValues[0]<=200 && sensorValues[1]<=200 && sensorValues[2]<=200 && sensorValues[3]<=200 && sensorValues[4]<=200 && sensorValues[5]<=200 && sensorValues[6]<=200 && sensorValues[7]<=200){
+      PID = false;
+   } // A case when the line follower leaves the line
+    else {
+    PID = true;
+ }
+   if(PID == false){
+    if(previousError>0){ 
+            //Turn left if the line was to the left before
+   Serial.print("LEFT");
+   Serial.print('\t');
+      motor1.drive(125);
+      motor2.drive(-125);
+    }
+    else{
+   Serial.print("RIGHT");
+   Serial.print('\t');
+      motor1.drive(-125);
+      motor2.drive(125);
+       // Else turn right
+    }
+  }
 
+  if (PID == true)
+  {
+     sumOfErrors = error + previousError;
+     float adjustedSpeed = (Kp * error) + (Kd * (error - previousError)) + (Ki * sumOfErrors);
+     previousError = error;
+
+     int speedA = constrain(motorSpeed + adjustedSpeed, 0, maxMotorSpeed);
+     int speedB = constrain(motorSpeed - adjustedSpeed, 0, maxMotorSpeed);
+
+     motor1.drive(speedA);
+     motor2.drive(speedB);
+
+   //   Serial.print(speedA);
+   //   Serial.print('\t');
+   //   Serial.print(speedB);
+   //   Serial.print('\t');
+   //   Serial.print(error);
+   //   Serial.println("");
+
+  }
+   Serial.print(PID);
+   Serial.print('\t');
+   Serial.print(previousError);
+   Serial.println("");
 }
 
-
-// Wait for Command
-// void waitForSystemStart() {
-//   Serial.println("Waiting for system to start...");
-//   while (!system_started) {
-  
-//     // websocket.loop();
-//     delay(100);  // Small delay to prevent busy waiting
-//   }
-//   Serial.println("System started!");
-// }
 
 
 void setup()
 {
 
   Serial.begin(9600);
-
-  // Websocket Setup
-  websocketSetup();
-
-  
-  
   // Configure the sensors
   qtr.setTypeRC();
-  qtr.setSensorPins((const uint8_t[]){14, 27, 26, 25, 33, 32, 18, 19}, SensorCount);
-  qtr.setEmitterPin(4);
+  qtr.setSensorPins((const uint8_t[]){2,3,4,5,6,7,8,11}, SensorCount);
+  qtr.setEmitterPin(12);
 
+  delay(1000);
+  calibrateLinesensor();
 
-    // // Set pins as outputs
-  pinMode(PWMA, OUTPUT);
-  pinMode(AIN1, OUTPUT);
-  pinMode(AIN2, OUTPUT);
-  pinMode(PWMB, OUTPUT);
-  pinMode(BIN1, OUTPUT);
-  pinMode(BIN2, OUTPUT);
-  pinMode(STBY, OUTPUT);
+ for (int i = 0; i < 3; i++)
+ {
+  digitalWrite(LED_BUILTIN, LOW);
+ delay(500);
+ digitalWrite(LED_BUILTIN, HIGH);
+ delay(500);
+ }
+ digitalWrite(LED_BUILTIN, LOW);
+ 
 
-  // // Initialize motors
-  digitalWrite(STBY, HIGH);
-
-
-
-
-  // Disable standby
- delay(1000);
 }
 
-void loop()
-{
+void loop(){
 
-  server.handleClient();
-  websocket.loop();
-
-    if (system_started== true){
-// Calibrate Sensors
-count++;
-if(count==1){
-  calibrateLinesensor();
-  }
-  
-
-else if (count>1){
   // // read calibrated sensor values and obtain a measure of the line position
   // // from 0 to 5000 (for a white line, use readLineWhite() instead)
-  uint16_t position = qtr.readLineBlack(sensorValues);
-
   // // print the sensor values as numbers from 0 to 1000, where 0 means maximum
   // // reflectance and 1000 means minimum reflectance, followed by the line
   // // position
@@ -374,12 +178,11 @@ else if (count>1){
     Serial.print(sensorValues[i]);
     Serial.print('\t');
   }
-  Serial.println(position);
+  // Serial.println(position);
 
   // // PID Control
-  PIDcontrol(KP,KI,KD);
-  delay(100);
-}    
+  PIDcontrol();
+  // Serial.print("Error:");
+  // Serial.println(error);
 }
 
-}
